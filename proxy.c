@@ -11,6 +11,10 @@
 # define dbg_printf(...)
 #endif
 
+/*************************
+    Default Header Settings
+***************************/
+
 static const char *default_user_agent = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
 static const char *default_accept = "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n";
 static const char *default_accept_encoding = "Accept-Encoding: gzip, deflate\r\n";
@@ -18,13 +22,15 @@ static const char *default_connect = "Connection: close\r\n";
 static const char *default_proxy = "Proxy-Connection: close\r\n";
 static const char *default_version = "HTTP/1.0\r\n";
 
+
+/*Define request struct*/
 typedef struct {
-        char* host;
-        int port;
-        char* request;
+        char* host; /*string host*/
+        int port; /*port number*/
+        char* request; /*HTTP request body*/
 }req_t;
 
-
+/*Helper function*/
 void doit(int fd);
 void get_request(rio_t *rp, req_t *req);
 void extract_header(char *raw, char *header, char *value);
@@ -37,7 +43,10 @@ void extract_host_port(char *value,char* host,int* port);
 void forward_to_server(int server_fd);
 
 
-
+/*
+ *  Copy from tiny web server, listen the port speicified
+ *  and repsonse through doit.
+ */
 int main(int argc, char **argv)
 {
 
@@ -62,20 +71,26 @@ int main(int argc, char **argv)
         return 0;
 }
 
+/*
+ * Get request from the client side, and modify the header due to
+ * the requirement in proxylab handout.
+ */
 
 void get_request(rio_t *rp, req_t* req)
 {
-        char buf[MAXLINE];
-        char key[MAXLINE],value[MAXLINE];
-        char raw[MAXLINE];
-        int has_host = 0;
+        char buf[MAXLINE]; /*line buffer*/
+        char key[MAXLINE],value[MAXLINE];/*Give a header, such as "Host: www.baidu.com\r\n",
+                                           key is the header's key, ie "Host"; value is the ac
+                                           according value, ie "www.baidu.com"*/
+        char raw[MAXLINE]; /*raw request*/
+        int has_host = 0; /* check whether the raw header has Host header*/
 
-        char request[MAXLINE];
+        char request[MAXLINE]; /*request body*/
         req->request = request;
 
         //printf("request address %p\n",request);
 
-        /*initialize all!*/
+        /*initialize all!Important!*/
         *request = 0;
         *raw = 0;
         *buf = 0;
@@ -86,17 +101,21 @@ void get_request(rio_t *rp, req_t* req)
         char host[MAXLINE];
         int port;
 
+        /*set default host address value*/
         *host = 0;
         port = 80;
 
         //char method[MAXLINE], uri[MAXLINE], version[MAXLINE],short_uri[MAXLINE];
 
-        Rio_readlineb(rp, buf, MAXLINE);
-        //printf("%s",buf);
+        Rio_readlineb(rp, buf, MAXLINE);;
         strcat(raw,buf);
+
+        /*Parse the first line of a request, ie "GET http://www.baidu.com/ HTTP/1.1\r\n"
+         * and extract the host and port.
+         */
         parse_reqline(request,buf,host,&port);
 
-
+        /*Set the default headers*/
         append_header((char *)default_user_agent,request);
         append_header((char *)default_accept,request);
         append_header((char *)default_accept_encoding,request);
@@ -116,17 +135,27 @@ void get_request(rio_t *rp, req_t* req)
                         printf("break!\n");
                         break;
                 }
+
+                /*extract headers' key and value from a header line*/
                 extract_header(buf,key,value);
                 if (*key != '\0' && *value!='\0') {
+
+                        /*If the raw request has Host header itself, use it*/
                         if (!strcmp(key,"Host")) {
                                 dbg_printf("contain host\n");
+
+                                /*Extract host and port from the value of the Host header,
+                                * which is different from extract host and port from request line;
+                                */
                                 extract_host_port(value,host,&port);
                                 has_host = 1;
                         }
+
                         set_header(key,value,request);
                 }
         }
-        //printf("final header\n");
+        /*If request doesn't have a Host header, using the host and port from the first request line
+          and put them together as a Host header.*/
         if (!has_host) {
                 char host_hdr[MAXLINE];
                 if (port != 80) {
@@ -155,42 +184,53 @@ void doit(int fd)
         Rio_readinitb(&rio,fd);
         get_request(&rio,&req);
 
-
+        /*Connect to the server*/
         server_fd = Open_clientfd(req.host,req.port);
         Rio_readinitb(&s_rio,server_fd);
+
+        /*Write modified request to server*/
         Rio_writen(server_fd,req.request,strlen(req.request));
 
+        /*Forward response from the server to the client through connfd*/
         ssize_t nread;
         char buf[MAXLINE];
         while((nread = Rio_readnb(&s_rio,buf,MAXLINE))!=0)
         {
             Rio_writen(fd,buf,nread);
         }
+        Close(server_fd);
 
         //printf("in req:\n%s%s %d\n",req.request,req.host,req.port);
 }
 
+
+/*Add new header line to request*/
 void append_header(char *hdr_line,char *header)
 {
         strcat(header,hdr_line);
 }
 
+
+/*Extract key and value from a raw header line*/
 void extract_header(char *raw, char *header, char *value)
 {
         char *ptr;
         char t_value[MAXLINE];
 
+        /*Header is splitted using a character ":"*/
         ptr = strstr(raw,":");
         if (ptr != NULL) {
-                *ptr = 0;
+                *ptr = 0; /*break the raw line into to strings*/
                 strcpy(header,raw);
-                strcpy(t_value,ptr+2);
+                strcpy(t_value,ptr+2);/*Ignore the blank behind ":"*/
                 ptr = strstr(t_value,"\r");
-                *ptr = 0;
+                *ptr = 0; /*Eliminate "\r\n"*/
                 strcpy(value,t_value);
         } else return;
 }
 
+
+/*Put key and value into a header line*/
 void add_to_header(char *key, char *value, char *header)
 {
         char hdr_line[MAXLINE];
@@ -200,6 +240,12 @@ void add_to_header(char *key, char *value, char *header)
 
 }
 
+/*Parse the uri field from the first request line.
+ * Note: If the uri begins with "http://" the extract host and port from it
+ * and cut the uri off the host domain, living only the shorter uri.
+ * For example if the raw uri is http://www.baidu.com:8080/index.html/
+ * the short_uri will be /index.html/ only
+ */
 int parse_uri(char *uri, char *host, int *port, char *short_uri)
 {
         *host = 0;
@@ -211,19 +257,22 @@ int parse_uri(char *uri, char *host, int *port, char *short_uri)
                 strcpy(short_uri,uri);
                 return 0;
         } else {
-                //printf
+                /*Ignore http://*/
                 http_ptr += 7;
-                //printf("without http %s\n",http_ptr);
+
+                /*Find the first '/' to extract host*/
                 slash_ptr = strchr(http_ptr,'/');
                 *slash_ptr = 0;
+
+                /*extract host to host_t*/
                 strcpy(host_t,http_ptr);
-                //printf("host_t is %s\n",host_t);
+
+                /*restore the short_uri*/
                 *slash_ptr = '/';
                 strcpy(short_uri,slash_ptr);
-                //printf("short_uri is %s\n",short_uri);
 
 
-
+                /*If contains a port number, extract it*/
                 char *ptr;
                 ptr = strstr(host_t,":");
                 if (ptr != NULL) {
@@ -238,6 +287,8 @@ int parse_uri(char *uri, char *host, int *port, char *short_uri)
         }
 }
 
+
+/*Parse the first line of the request*/
 int parse_reqline(char *header,char *reqline, char* host, int *port)
 {
         char method[MAXLINE], uri[MAXLINE], version[MAXLINE],short_uri[MAXLINE];
@@ -246,13 +297,17 @@ int parse_reqline(char *header,char *reqline, char* host, int *port)
         int found_host;
         found_host = parse_uri(uri,host,port,short_uri);
         char new_req[MAXLINE];
+
+        /*using cutted short_uri and default version*/
         sprintf(new_req, "%s %s %s",method, short_uri,default_version);
         append_header(new_req,header);
         return found_host;
 
 }
 
-
+/*
+* Add header to the request, but ignore the default headers
+*/
 void set_header(char *key, char *value, char *header)
 {
         if (!strcmp(key,"User-Agent")|| !strcmp(key,"Accept")|| !strcmp(key,"Accept-Encoding")
@@ -265,6 +320,8 @@ void set_header(char *key, char *value, char *header)
 
 }
 
+
+/*Extract host and port from the value of Host header*/
 void extract_host_port(char *value,char* host,int* port)
 {
         char t_value[MAXLINE];
