@@ -21,6 +21,7 @@ static const char *default_accept_encoding = "Accept-Encoding: gzip, deflate\r\n
 static const char *default_connect = "Connection: close\r\n";
 static const char *default_proxy = "Proxy-Connection: close\r\n";
 static const char *default_version = "HTTP/1.0\r\n";
+static sem_t mutex;
 
 
 /*Define request struct*/
@@ -41,7 +42,7 @@ int parse_reqline(char *header,char *reqline, char* host, int *port);
 void set_header(char *key, char *value, char *header);
 void extract_host_port(char *value,char* host,int* port);
 void forward_to_server(int server_fd);
-
+void *thread(void* vargp);
 
 /*
  *  Copy from tiny web server, listen the port speicified
@@ -50,8 +51,13 @@ void forward_to_server(int server_fd);
 int main(int argc, char **argv)
 {
 
-        int listenfd, connfd, port, clientlen;
+        int listenfd, port, clientlen;
+        int* connfdp;
         struct sockaddr_in clientaddr;
+        pthread_t tid1,tid2;
+        Sem_init(&mutex,0,1);
+
+        Signal(SIGPIPE, SIG_IGN);
 
         if (argc != 2) {
                 fprintf(stderr, "usage: %s <port>\n", argv[0]);
@@ -63,9 +69,12 @@ int main(int argc, char **argv)
         while (1) {
                 printf("new connection!\n");
                 clientlen = sizeof(clientaddr);
-                connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);
-                doit(connfd);
-                Close(connfd);
+                connfdp = Malloc(sizeof(int));
+                *connfdp = Accept(listenfd, (SA *)&clientaddr, &clientlen);
+                //doit(connfd);
+                //Close(connfd);
+                Pthread_create(&tid1,NULL,thread,connfdp);
+                //Pthread_create(&tid2,NULL,thread,NULL);
         }
 
         return 0;
@@ -186,6 +195,7 @@ void doit(int fd)
 
         /*Connect to the server*/
         server_fd = Open_clientfd(req.host,req.port);
+        if(server_fd == -1) return;
         Rio_readinitb(&s_rio,server_fd);
 
         /*Write modified request to server*/
@@ -336,4 +346,14 @@ void extract_host_port(char *value,char* host,int* port)
                 strcpy(host,t_value);
                 *port = atoi(ptr+1);
         }
+}
+
+void *thread(void* vargp)
+{
+    int connfd = *((int *)vargp);
+    Pthread_detach(Pthread_self());
+    Free(vargp);
+    doit(connfd);
+    Close(connfd);
+    return NULL;
 }

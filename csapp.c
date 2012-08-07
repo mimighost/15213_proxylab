@@ -694,7 +694,7 @@ ssize_t Rio_readn(int fd, void *ptr, size_t nbytes)
 void Rio_writen(int fd, void *usrbuf, size_t n)
 {
         if (rio_writen(fd, usrbuf, n) != n) {
-                if (errno == EPIPE) {
+                if (errno == EPIPE || errno == ECONNRESET) {
                         printf("Server closed\n");
                         return;
                 } else unix_error("Rio_writen error");
@@ -806,8 +806,10 @@ int Open_clientfd(char *hostname, int port)
         int rc;
 
         if ((rc = open_clientfd(hostname, port)) < 0) {
-                if (rc == -1)
-                        unix_error("Open_clientfd Unix error");
+                if (rc == -1){
+                        if(errno != ETIMEDOUT)
+                            unix_error("Open_clientfd Unix error");
+                }
                 else
                         dns_error("Open_clientfd DNS error");
         }
