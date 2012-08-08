@@ -695,7 +695,7 @@ void Rio_writen(int fd, void *usrbuf, size_t n)
 {
         if (rio_writen(fd, usrbuf, n) != n) {
                 if (errno == EPIPE || errno == ECONNRESET) {
-                        printf("Server closed\n");
+                        printf("Server closed %s\n",strerror(errno));
                         return;
                 } else unix_error("Rio_writen error");
         }

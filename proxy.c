@@ -1,5 +1,7 @@
 #include <stdio.h>
+#include <time.h>
 #include "csapp.h"
+#include "cache.h"
 
 #define MAX_CACHE_SIZE 1049000
 #define MAX_OBJECT_SIZE 102400
@@ -22,13 +24,15 @@ static const char *default_connect = "Connection: close\r\n";
 static const char *default_proxy = "Proxy-Connection: close\r\n";
 static const char *default_version = "HTTP/1.0\r\n";
 static sem_t mutex;
-
+static cache_list *Cache_list;
+pthread_rwlock_t rwlock;
 
 /*Define request struct*/
 typedef struct {
         char* host; /*string host*/
         int port; /*port number*/
         char* request; /*HTTP request body*/
+        char id[MAXLINE];
 }req_t;
 
 /*Helper function*/
@@ -43,6 +47,7 @@ void set_header(char *key, char *value, char *header);
 void extract_host_port(char *value,char* host,int* port);
 void forward_to_server(int server_fd);
 void *thread(void* vargp);
+int iRio_writen(int fd, void *usrbuf, size_t n);
 
 /*
  *  Copy from tiny web server, listen the port speicified
@@ -56,7 +61,9 @@ int main(int argc, char **argv)
         struct sockaddr_in clientaddr;
         pthread_t tid1,tid2;
         Sem_init(&mutex,0,1);
-
+        Cache_list = (cache_list*)Malloc(sizeof(Cache_list));
+        init_cache_list(Cache_list);
+        pthread_rwlock_init(&rwlock, NULL);
         Signal(SIGPIPE, SIG_IGN);
 
         if (argc != 2) {
@@ -73,6 +80,7 @@ int main(int argc, char **argv)
                 *connfdp = Accept(listenfd, (SA *)&clientaddr, &clientlen);
                 //doit(connfd);
                 //Close(connfd);
+                //doit(*connfdp);
                 Pthread_create(&tid1,NULL,thread,connfdp);
                 //Pthread_create(&tid2,NULL,thread,NULL);
         }
@@ -116,7 +124,9 @@ void get_request(rio_t *rp, req_t* req)
 
         //char method[MAXLINE], uri[MAXLINE], version[MAXLINE],short_uri[MAXLINE];
 
-        Rio_readlineb(rp, buf, MAXLINE);;
+        Rio_readlineb(rp, buf, MAXLINE);
+        strcpy(req->id,buf);
+
         strcat(raw,buf);
 
         /*Parse the first line of a request, ie "GET http://www.baidu.com/ HTTP/1.1\r\n"
@@ -178,8 +188,8 @@ void get_request(rio_t *rp, req_t* req)
         req->host = host;
         req->port = port;
         append_header("\r\n",request);
-        printf("raw:\n%s",raw);
-        printf("modified:\n%s",request);
+        //printf("raw:\n%s",raw);
+        //printf("modified:\n%s",request);
         return;
 }
 
@@ -191,23 +201,81 @@ void doit(int fd)
         int server_fd;
         //char request[MAXLINE];
         Rio_readinitb(&rio,fd);
+
+        printf("bbfore reqs!\n");
+        print_list(Cache_list);
+
         get_request(&rio,&req);
+
+        printf("before request\n");
+        print_list(Cache_list);
+
+        //printf("req id is %s",req.id);
+
+        /*readlock area*/
+        pthread_rwlock_rdlock(&rwlock);
+        printf("try find\n");
+        cache_block *block;
+        block = find_cache(Cache_list,req.id);
+        if(block!=NULL)
+        {
+            //print_list(Cache_list);
+            Rio_writen(fd,block->content,block->blocksize);
+            printf("hit!\n");
+            pthread_rwlock_unlock(&rwlock);
+            return;
+        }
+        pthread_rwlock_unlock(&rwlock);
+
+        /*readlock area*/
+
 
         /*Connect to the server*/
         server_fd = Open_clientfd(req.host,req.port);
-        if(server_fd == -1) return;
+        if (server_fd == -1) return;
         Rio_readinitb(&s_rio,server_fd);
 
         /*Write modified request to server*/
-        Rio_writen(server_fd,req.request,strlen(req.request));
+        int server_connect = 0;
+        server_connect = iRio_writen(server_fd,req.request,strlen(req.request));
+        //if(errno == EPIPE) printf("Trace host %s\n",req.host);
+
+        if (server_connect < 0) {
+                Close(server_fd);
+                return;
+        }
 
         /*Forward response from the server to the client through connfd*/
         ssize_t nread;
-        char buf[MAXLINE];
-        while((nread = Rio_readnb(&s_rio,buf,MAXLINE))!=0)
-        {
-            Rio_writen(fd,buf,nread);
+        char buf[MAX_OBJECT_SIZE];
+        unsigned cache_size = 0;
+
+        while ((nread = Rio_readnb(&s_rio,buf,MAX_OBJECT_SIZE))!=0) {
+                iRio_writen(fd,buf,nread);
+                cache_size += nread;
+
         }
+
+        if((cache_size!=0) && (cache_size <= MAX_OBJECT_SIZE))
+        {
+            /*write lock*/
+
+            pthread_rwlock_wrlock(&rwlock);
+            printf("try write\n");
+            printf("cacheable!");
+            evict_cache(Cache_list,cache_size);
+            cache_block *block;
+            char* content;
+            content = (char*)Malloc(cache_size*sizeof(char));
+            memcpy(content,buf,cache_size);
+            block = build_cache(req.id,content,cache_size);
+            insert_cache(Cache_list,block);
+            printf("after cached!\n");
+            print_list(Cache_list);
+            pthread_rwlock_unlock(&rwlock);
+            /*Write lock*/
+        }
+
         Close(server_fd);
 
         //printf("in req:\n%s%s %d\n",req.request,req.host,req.port);
@@ -350,10 +418,22 @@ void extract_host_port(char *value,char* host,int* port)
 
 void *thread(void* vargp)
 {
-    int connfd = *((int *)vargp);
-    Pthread_detach(Pthread_self());
-    Free(vargp);
-    doit(connfd);
-    Close(connfd);
-    return NULL;
+        int connfd = *((int *)vargp);
+        Pthread_detach(Pthread_self());
+        Free(vargp);
+        doit(connfd);
+        Close(connfd);
+        return NULL;
+}
+
+int iRio_writen(int fd, void *usrbuf, size_t n)
+{
+        if (rio_writen(fd, usrbuf, n) != n) {
+                if (errno == EPIPE || errno == ECONNRESET) {
+                        printf("Server closed %s\n",strerror(errno));
+                        return -1;
+                } else unix_error("Rio_writen error");
+        }
+
+        return 0;
 }
