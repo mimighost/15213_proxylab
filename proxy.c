@@ -1,3 +1,9 @@
+/*
+ * Name:Yuchen Tian,Andrew ID: yuchent
+ * Name:Guanyu Wang,Andrew ID: guanyuw
+ */
+
+
 #include <stdio.h>
 #include <time.h>
 #include "csapp.h"
@@ -59,7 +65,7 @@ int main(int argc, char **argv)
         int listenfd, port, clientlen;
         int* connfdp;
         struct sockaddr_in clientaddr;
-        pthread_t tid1,tid2;
+        pthread_t tid1;
         Sem_init(&mutex,0,1);
         Cache_list = (cache_list*)Malloc(sizeof(Cache_list));
         init_cache_list(Cache_list);
@@ -74,7 +80,7 @@ int main(int argc, char **argv)
 
         listenfd = Open_listenfd(port);
         while (1) {
-                printf("new connection!\n");
+                //printf("new connection!\n");
                 clientlen = sizeof(clientaddr);
                 connfdp = Malloc(sizeof(int));
                 *connfdp = Accept(listenfd, (SA *)&clientaddr, &clientlen);
@@ -151,7 +157,7 @@ void get_request(rio_t *rp, req_t* req)
                 strcat(raw,buf);
                 //printf("raw %s len %d\n",buf,strlen(buf));
                 if (!strcmp(buf, "\r\n")) {
-                        printf("break!\n");
+                        //printf("break!\n");
                         break;
                 }
 
@@ -202,26 +208,26 @@ void doit(int fd)
         //char request[MAXLINE];
         Rio_readinitb(&rio,fd);
 
-        printf("bbfore reqs!\n");
+        //printf("bbfore reqs!\n");
         print_list(Cache_list);
 
         get_request(&rio,&req);
 
-        printf("before request\n");
+        //printf("before request\n");
         print_list(Cache_list);
 
         //printf("req id is %s",req.id);
 
         /*readlock area*/
         pthread_rwlock_rdlock(&rwlock);
-        printf("try find\n");
+        //printf("try find\n");
         cache_block *block;
         block = find_cache(Cache_list,req.id);
         if(block!=NULL)
         {
             //print_list(Cache_list);
             Rio_writen(fd,block->content,block->blocksize);
-            printf("hit!\n");
+            //printf("hit!\n");
             pthread_rwlock_unlock(&rwlock);
             return;
         }
@@ -261,8 +267,8 @@ void doit(int fd)
             /*write lock*/
 
             pthread_rwlock_wrlock(&rwlock);
-            printf("try write\n");
-            printf("cacheable!");
+            //printf("try write\n");
+            //printf("cacheable!");
             evict_cache(Cache_list,cache_size);
             cache_block *block;
             char* content;
@@ -270,8 +276,8 @@ void doit(int fd)
             memcpy(content,buf,cache_size);
             block = build_cache(req.id,content,cache_size);
             insert_cache(Cache_list,block);
-            printf("after cached!\n");
-            print_list(Cache_list);
+            //printf("after cached!\n");
+            //print_list(Cache_list);
             pthread_rwlock_unlock(&rwlock);
             /*Write lock*/
         }

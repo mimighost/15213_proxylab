@@ -8,7 +8,7 @@
 /* $begin unixerror */
 void unix_error(char *msg) /* unix-style error */
 {
-        fprintf(stderr, "%s: %s\n", msg, strerror(errno));
+        fprintf(stderr, "%s: %d %s\n", msg, errno, strerror(errno));
         exit(0);
 }
 /* $end unixerror */
@@ -811,7 +811,8 @@ int Open_clientfd(char *hostname, int port)
                             unix_error("Open_clientfd Unix error");
                 }
                 else
-                        dns_error("Open_clientfd DNS error");
+                        //dns_error("Open_clientfd DNS error");
+                        rc = -1;
         }
         return rc;
 }
